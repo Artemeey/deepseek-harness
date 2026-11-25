@@ -5,7 +5,7 @@
  */
 
 import type {
-  ChangeRequestSummary, ChecksRollup, ForgeFailure, ForgeRepository, ForgeViewerFilter, ForgeViewerList, ForgeViewerQuery,
+  ChangeRequestSummary, ChecksRollup, ForgeFailure, ForgeViewerFilter, ForgeViewerList, ForgeViewerQuery,
 } from '@deepseek-ai/dsh-experimental-forge'
 import { z } from 'zod'
 import type { GitLabApi } from './api.ts'
@@ -70,7 +70,7 @@ async function viewerName(api: GitLabApi, host: string, signal: AbortSignal): Pr
  * @returns the API paths below `/api/v4/`, most recently updated first as the review page orders them.
  */
 function viewerPaths(
-  filter: ForgeViewerFilter, username: string, perPage: number, repository: ForgeRepository | null,
+  filter: ForgeViewerFilter, username: string, perPage: number, repository: ForgeViewerQuery['repository'],
 ): readonly string[] {
   const scope = repository === null ? '' : `projects/${encodeURIComponent(`${repository.owner}/${repository.name}`)}/`
   const order = `scope=all&state=opened&order_by=updated_at&sort=desc&per_page=${perPage}`
