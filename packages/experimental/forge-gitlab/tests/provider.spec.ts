@@ -12,7 +12,7 @@ import { job, mergeRequestNode, PIPELINE } from './status.spec.ts'
 const signal = new AbortController().signal
 const limits: GitLabLimits = {
   maxOutputBytes: 8_000_000, maxReviewThreads: 1000, maxCommits: 250, statusBatchSize: 2, maxConcurrentRequests: 2,
-  maxCachedVersionBytes: 1_000_000,
+  maxCachedVersionBytes: 1_000_000, maxViewerItems: 50,
 }
 
 function provider(answer: (path: string, call: GlabCall) => GlabOutput | Promise<GlabOutput>, overrides: Partial<GitLabLimits> = {}) {
@@ -500,3 +500,40 @@ describe('GitLab provider writes', () => {
 export function isFailure(result: ChangeRequestSnapshot | ForgeFailure | undefined): result is ForgeFailure {
   return result !== undefined && 'code' in result
 }
+
+describe('GitLab provider viewer reads', () => {
+  it('refuses a limit above the configured maximum', async () => {
+    const { subject } = provider(() => json({ username: 'viewer' }))
+    await expect(subject.listForViewer({ host: HOST, filter: 'authored', repository: null, limit: 51 }, signal))
+      .rejects.toThrow('forge-gitlab: viewer list limit must be a positive integer no greater than 50')
+  })
+
+  it('refuses a host it does not serve', async () => {
+    const { subject } = provider(() => json({}))
+    await expect(subject.listForViewer({ host: 'other.example.test', filter: 'authored', repository: null, limit: 1 }, signal))
+      .resolves.toMatchObject({ code: 'unavailable' })
+    await expect(subject.countForViewer('other.example.test', signal)).resolves.toMatchObject({ code: 'unavailable' })
+  })
+
+  it('reads a list and the counts of every list', async () => {
+    const { subject } = provider(path => path === 'user' ? json({ username: 'viewer' }) : json([{
+      web_url: 'https://gitlab.example.test/group/sub/app/-/merge_requests/1', title: 'One', updated_at: '2026-11-24T10:00:00Z',
+    }]))
+    await expect(subject.listForViewer({ host: HOST, filter: 'authored', repository: null, limit: 50 }, signal))
+      .resolves.toMatchObject({ viewer: 'viewer', items: [{ ref: { number: 1 } }] })
+    await expect(subject.countForViewer(HOST, signal)).resolves.toEqual(new Map([
+      ['review-requested', 0], ['authored', 0], ['involved', 0],
+    ]))
+  })
+
+  it('reads a description', async () => {
+    const { subject } = provider(() => json({ description: 'Closes #1', labels: [], created_at: '2026-11-24T10:00:00Z' }))
+    await expect(subject.readDescription(merge(6), signal)).resolves.toMatchObject({ body: 'Closes #1', labels: [] })
+  })
+
+  it('refuses a description for a host it does not serve', async () => {
+    const { subject } = provider(() => json({}))
+    await expect(subject.readDescription({ repository: { ...app, host: 'other.example.test' }, number: 6 }, signal))
+      .resolves.toMatchObject({ code: 'unavailable' })
+  })
+})

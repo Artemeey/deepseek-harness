@@ -35,6 +35,8 @@ export interface Config {
   maxConcurrentRequests?: number
   /** Most bytes of diff version patches kept in memory for the hunks of outdated review threads. */
   maxCachedVersionBytes?: number
+  /** Most merge requests one viewer list read returns, no greater than a GitLab page of 100. */
+  maxViewerItems?: number
 }
 
 export const Config: z<Config> = z.object({
@@ -47,9 +49,13 @@ export const Config: z<Config> = z.object({
   statusBatchSize: z.number().default(2),
   maxConcurrentRequests: z.number().default(4),
   maxCachedVersionBytes: z.number().default(16_777_216),
+  maxViewerItems: z.number().default(50),
 })
 
 const HOST = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:\d+)?$/i
+
+/** Most entries one GitLab REST page returns, which bounds a viewer list read. */
+const VIEWER_PAGE = 100
 
 export function apply(ctx: Context, config: Config): void {
   const resolved = config as Required<Config>
@@ -61,8 +67,14 @@ export function apply(ctx: Context, config: Config): void {
   if (!Number.isSafeInteger(resolved.timeoutMs) || resolved.timeoutMs <= 0 || resolved.timeoutMs > MAX_TIMER_DELAY_MS) {
     throw new Error(`forge-gitlab: timeoutMs must be a positive integer no greater than ${MAX_TIMER_DELAY_MS}`)
   }
-  for (const key of ['maxOutputBytes', 'maxReviewThreads', 'maxCommits', 'statusBatchSize', 'maxConcurrentRequests', 'maxCachedVersionBytes'] as const) {
+  for (const key of [
+    'maxOutputBytes', 'maxReviewThreads', 'maxCommits', 'statusBatchSize', 'maxConcurrentRequests', 'maxCachedVersionBytes',
+    'maxViewerItems',
+  ] as const) {
     if (!Number.isSafeInteger(resolved[key]) || resolved[key] <= 0) throw new Error(`forge-gitlab: ${key} must be a positive safe integer`)
+  }
+  if (resolved.maxViewerItems > VIEWER_PAGE) {
+    throw new Error(`forge-gitlab: maxViewerItems must be no greater than ${VIEWER_PAGE}`)
   }
   ctx.forge.register(new GitLabProvider(glabRunner(resolved), resolved.hosts, resolved))
   ctx.inject(['forgeSession'], (scope) => {

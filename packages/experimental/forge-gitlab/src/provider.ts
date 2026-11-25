@@ -2,14 +2,16 @@
 
 import { changeRequestKey } from '@deepseek-ai/dsh-experimental-forge'
 import type {
-  BranchUpdateRequest, ChangeRequestIssue, ChangeRequestKey, ChangeRequestRef, ChangeRequestSnapshot, ForgeActionFailure, ForgeCommitList,
-  ForgeFailure, ForgeProvider, ForgeReadiness, ForgeRepository, ForgeRerunRequest, ForgeReviewData, ForgeReviewerCandidate,
-  ForgeReviewersRequest, ForgeReviewRequest, ForgeReviewResult, ForgeReviewWrite, ForgeReviewWriteResult, MergeRequest,
+  BranchUpdateRequest, ChangeRequestDescription, ChangeRequestIssue, ChangeRequestKey, ChangeRequestRef, ChangeRequestSnapshot,
+  ForgeActionFailure, ForgeCommitList, ForgeFailure, ForgeProvider, ForgeReadiness, ForgeRepository, ForgeRerunRequest, ForgeReviewData,
+  ForgeReviewerCandidate, ForgeReviewersRequest, ForgeReviewRequest, ForgeReviewResult, ForgeReviewWrite, ForgeReviewWriteResult,
+  ForgeViewerCapability, ForgeViewerFilter, ForgeViewerList, ForgeViewerQuery, MergeRequest,
 } from '@deepseek-ai/dsh-experimental-forge'
 import { z } from 'zod'
 import { GitLabApi } from './api.ts'
 import { readCommits } from './commits.ts'
 import { comparePatch, fileTextOf, isCommit, mergeBaseOf, newestVersion, textPatch, versionFileDiffs, versionPatch } from './diff.ts'
+import { readDescription } from './description.ts'
 import type { GlabRunner } from './glab.ts'
 import { gitLabReviewerCandidates, requestGitLabReviews, rerunGitLabChecks, updateGitLabBranch } from './overview.ts'
 import { pool } from './pool.ts'
@@ -21,6 +23,7 @@ import {
 } from './status.ts'
 import type { JobNode, MergeRequestNode } from './status.ts'
 import { checkedProject, encodedPath, mergeRequestPath, parseMergeRequestUrl, parseRemoteUrl, repositoryOf } from './urls.ts'
+import { countViewerLists, readViewerList, VIEWER_FILTERS } from './viewer.ts'
 import { submitGitLabReview, writeGitLabReview } from './writes.ts'
 import type { VersionFiles } from './writes.ts'
 
@@ -44,6 +47,8 @@ export interface GitLabLimits {
   readonly maxConcurrentRequests: number
   /** Most bytes of diff version patches kept for the hunks of outdated threads and the positions of new comments. */
   readonly maxCachedVersionBytes: number
+  /** Most merge requests one viewer list read returns. */
+  readonly maxViewerItems: number
 }
 
 /** The issues a merge request closes, kept until its update time changes. */
@@ -69,6 +74,8 @@ export class GitLabProvider implements ForgeProvider {
   readonly hosts: readonly string[]
   readonly label = 'GitLab'
   readonly changeRequestNoun = 'merge-request'
+  /** Lists of the signed-in user's open merge requests this provider reads on its hosts. */
+  readonly viewer: ForgeViewerCapability
   private readonly served: ReadonlySet<string>
   private readonly api: GitLabApi
   /** Closing issues by merge request; one entry per merge request this provider polled. */
@@ -88,6 +95,7 @@ export class GitLabProvider implements ForgeProvider {
     this.api = new GitLabApi(glab)
     this.hosts = [...new Set(hosts.map(host => host.toLowerCase()))]
     this.served = new Set(this.hosts)
+    this.viewer = { hosts: this.hosts, filters: VIEWER_FILTERS, maxItems: limits.maxViewerItems }
   }
 
   repositoryFromRemote(url: string): ForgeRepository | undefined {
@@ -103,6 +111,45 @@ export class GitLabProvider implements ForgeProvider {
   changeRequestUrl(ref: ChangeRequestRef): string {
     const { host, owner, name } = ref.repository
     return `https://${host}/${owner}/${name}/-/merge_requests/${ref.number}`
+  }
+
+  /**
+   * Read one list of the signed-in user's open merge requests.
+   * @param query - host, list, repository, and a limit no greater than `maxViewerItems`.
+   * @param signal - cancellation of the read.
+   * @returns the list, or why GitLab did not provide it.
+   */
+  async listForViewer(query: ForgeViewerQuery, signal: AbortSignal): Promise<ForgeViewerList | ForgeFailure> {
+    const failure = this.hostFailure(query.host)
+    if (failure !== undefined) return failure
+    if (!Number.isSafeInteger(query.limit) || query.limit <= 0 || query.limit > this.viewer.maxItems) {
+      throw new Error(`forge-gitlab: viewer list limit must be a positive integer no greater than ${this.viewer.maxItems}`)
+    }
+    return await readViewerList(this.api, query, signal)
+  }
+
+  /**
+   * Count the change requests in each viewer list this provider offers on one host.
+   * @param host - GitLab host.
+   * @param signal - cancellation of the read.
+   * @returns the size of each list, or why GitLab did not provide them.
+   */
+  async countForViewer(host: string, signal: AbortSignal): Promise<ReadonlyMap<ForgeViewerFilter, number> | ForgeFailure> {
+    const failure = this.hostFailure(host)
+    if (failure !== undefined) return failure
+    return await countViewerLists(this.api, host, signal)
+  }
+
+  /**
+   * Read a merge request's description and labels.
+   * @param ref - merge request.
+   * @param signal - cancellation of the read.
+   * @returns the description, or why GitLab did not provide it.
+   */
+  async readDescription(ref: ChangeRequestRef, signal: AbortSignal): Promise<ChangeRequestDescription | ForgeFailure> {
+    const failure = this.hostFailure(ref.repository.host)
+    if (failure !== undefined) return failure
+    return await readDescription(this.api, ref, signal)
   }
 
   async fetch(

@@ -1842,6 +1842,8 @@ export interface Config {
   maxConcurrentRequests?: number
   /** Most bytes of diff version patches kept in memory for the hunks of outdated review threads. */
   maxCachedVersionBytes?: number
+  /** Most merge requests one viewer list read returns, no greater than a GitLab page of 100. */
+  maxViewerItems?: number
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-forge-gitlab -->

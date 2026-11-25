@@ -89,6 +89,8 @@ describe('forge-gitlab plugin', () => {
     [{ statusBatchSize: 0 }, 'forge-gitlab: statusBatchSize must be a positive safe integer'],
     [{ maxConcurrentRequests: -1 }, 'forge-gitlab: maxConcurrentRequests must be a positive safe integer'],
     [{ maxCachedVersionBytes: Number.MAX_SAFE_INTEGER + 1 }, 'forge-gitlab: maxCachedVersionBytes must be a positive safe integer'],
+    [{ maxViewerItems: 0 }, 'forge-gitlab: maxViewerItems must be a positive safe integer'],
+    [{ maxViewerItems: 101 }, 'forge-gitlab: maxViewerItems must be no greater than 100'],
   ])('refuses the configuration %j', async (config, message) => {
     const context = await forge()
     await expect(context.plugin(ForgeGitLab, config)).rejects.toThrow(message)
